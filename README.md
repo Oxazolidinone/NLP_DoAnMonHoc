@@ -34,7 +34,7 @@ pip install vncorenlp
 
 1. **Clone repository**
 ```bash
-git clone https://github.com/Oxazolidinone/NLP_UIT_2025.git
+git clone https://github.com/Oxazolidinone/NLP_DoAnMonHoc.git
 cd NLP_DoAnMonHoc
 ```
 
