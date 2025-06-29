@@ -190,19 +190,6 @@ class ParallelVietnameseTextPreprocessor:
 
 
 def preprocess_text(texts, use_parallel: bool = True, n_workers: int = None, use_word_segmentation: bool = True, vncorenlp_path: str = "./VnCoreNLP/VnCoreNLP-1.1.1.jar"):
-    """
-    Preprocess a single text or list of texts with optional parallel processing
-    
-    Args:
-        texts: Single text string or list of texts
-        use_parallel: Whether to use parallel processing for batches
-        n_workers: Number of worker threads (default: min(cpu_count(), 4))
-        use_word_segmentation: Whether to use word segmentation
-        vncorenlp_path: Path to VnCoreNLP JAR file
-    
-    Returns:
-        Processed text(s)
-    """
     if isinstance(texts, str):
         # Single text - use regular preprocessor
         preprocessor = VietnameseTextPreprocessor(vncorenlp_path)
@@ -230,18 +217,4 @@ def preprocess_text(texts, use_parallel: bool = True, n_workers: int = None, use
 
 
 def preprocess_text_for_llm(texts, use_parallel: bool = True, n_workers: int = None, use_word_segmentation: bool = True, vncorenlp_path: str = "./VnCoreNLP/VnCoreNLP-1.1.1.jar"):
-    """
-    Lightweight preprocessing specifically for LLM models with parallel processing
-    
-    Args:
-        texts: Single text string or list of texts
-        use_parallel: Whether to use parallel processing for batches
-        n_workers: Number of worker threads (default: min(cpu_count(), 4))
-        use_word_segmentation: Whether to use word segmentation
-        vncorenlp_path: Path to VnCoreNLP JAR file
-    
-    Returns:
-        Processed text(s)
-    """
-    # For LLM, we use the same preprocessing
     return preprocess_text(texts, use_parallel, n_workers, use_word_segmentation, vncorenlp_path)
