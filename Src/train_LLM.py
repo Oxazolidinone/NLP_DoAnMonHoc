@@ -1,6 +1,6 @@
 import sys 
+import os
 sys.path.insert(0, '.')
-import pandas as pd
 import numpy as np
 import time
 import torch
@@ -11,12 +11,10 @@ from torch.optim import AdamW
 from transformers import AutoTokenizer, AutoModel, get_linear_schedule_with_warmup
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
-from sklearn.preprocessing import LabelEncoder
-from multiprocessing import cpu_count
 from Src.preprocessing import preprocess_text_for_llm
 from tqdm import tqdm
 import warnings
-import os
+
 warnings.filterwarnings('ignore')
 
 class SentimentDataset(Dataset):
@@ -56,23 +54,16 @@ class SentimentClassifier(nn.Module):
         self.classifier = nn.Linear(self.transformer.config.hidden_size, num_classes)
         
     def forward(self, input_ids, attention_mask):
-        # Get transformer outputs
         outputs = self.transformer(input_ids=input_ids, attention_mask=attention_mask)
-        
-        # Use [CLS] token representation (first token)
         pooled_output = outputs.last_hidden_state[:, 0, :]
-        
-        # Apply dropout and classifier
         pooled_output = self.dropout(pooled_output)
         logits = self.classifier(pooled_output)
         
         return logits
 
 def train_epoch(model, dataloader, optimizer, scheduler, device):
-    """Train one epoch"""
     model.train()
     total_loss = 0
-    
     for batch in tqdm(dataloader, desc="Training"):
         optimizer.zero_grad()
         
@@ -92,7 +83,6 @@ def train_epoch(model, dataloader, optimizer, scheduler, device):
     return total_loss / len(dataloader)
 
 def evaluate_model(model, dataloader, device):
-    """Evaluate model"""
     model.eval()
     all_preds = []
     all_labels = []
@@ -126,7 +116,6 @@ def evaluate_model(model, dataloader, device):
     }
 
 def compute_metrics(eval_pred):
-    """Compute metrics for evaluation"""
     predictions, labels = eval_pred
     predictions = np.argmax(predictions, axis=1)
     
@@ -140,30 +129,12 @@ def compute_metrics(eval_pred):
         'recall': recall
     }
 
-def train_llm(data_path, model_name='vinai/phobert-base', max_length=256, 
-              epochs=3, batch_size=32, learning_rate=2e-5,
-              use_parallel_preprocessing=True, n_workers=None,
-              output_dir="./llm_models"):
-    """Train LLM with custom PyTorch model"""
-    n_workers = n_workers or min(cpu_count(), 4)
+def train_llm_with_preprocessed(data, preprocessed_texts, model_name='vinai/phobert-base', max_length=256, 
+                               epochs=3, batch_size=32, learning_rate=2e-5, output_dir="./llm_models"):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    # Load data
-    data = pd.read_csv(data_path)
-    
-    # Map labels to integers
     unique_labels = sorted(data['label'].unique())
     label_to_int = {label: i for i, label in enumerate(unique_labels)}
     data['label_int'] = data['label'].map(label_to_int)
-    
-    # Preprocess texts
-    texts = data['content'].tolist()
-    preprocessed_texts = preprocess_text_for_llm(
-        texts, 
-        use_word_segmentation=True, 
-        use_parallel=use_parallel_preprocessing,
-        n_workers=n_workers
-    )
     
     # Split data
     X_train, X_test, y_train, y_test = train_test_split(
@@ -256,51 +227,7 @@ def load_model(model_path):
     
     return model, tokenizer, checkpoint
 
-def predict_llm(model_path, texts, use_parallel_preprocessing=True, n_workers=None):
-    """Make predictions with trained model"""
-    n_workers = n_workers or min(cpu_count(), 4)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    # Load model
-    model, tokenizer, checkpoint = load_model(model_path)
-    model.to(device)
-    model.eval()
-    
-    # Preprocess texts
-    if isinstance(texts, str):
-        texts = [texts]
-    
-    preprocessed_texts = preprocess_text_for_llm(
-        texts, 
-        use_word_segmentation=True, 
-        use_parallel=use_parallel_preprocessing,
-        n_workers=n_workers
-    )
-    
-    # Make predictions
-    predictions = []
-    with torch.no_grad():
-        for text in tqdm(preprocessed_texts, desc="Making predictions"):
-            inputs = tokenizer(
-                text, 
-                return_tensors="pt", 
-                truncation=True, 
-                padding=True, 
-                max_length=checkpoint['max_length']
-            )
-            
-            input_ids = inputs['input_ids'].to(device)
-            attention_mask = inputs['attention_mask'].to(device)
-            
-            logits = model(input_ids, attention_mask)
-            prediction = torch.argmax(logits, dim=1)
-            predictions.append(prediction.item())
-    
-    return predictions
-
 class LLMSentimentClassifier:
-    """Wrapper class for LLM sentiment classification to match interface expected by main.py"""
-    
     def __init__(self, model_name: str, vncorenlp_path: str = "./VnCoreNLP/VnCoreNLP-1.1.1.jar"):
         self.model_name = model_name
         self.vncorenlp_path = vncorenlp_path
@@ -309,16 +236,15 @@ class LLMSentimentClassifier:
         self.checkpoint = None
         self.is_fitted = False
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
-    def train_model(self, data_path: str, test_size: float = 0.2, epochs: int = 3, 
-                   batch_size: int = 16, learning_rate: float = 2e-5, max_length: int = 256):
-        """Train the LLM model and return results compatible with main.py"""
-        
+
+    def train_model_with_preprocessed(self, data, preprocessed_texts, epochs: int = 3, batch_size: int = 16, learning_rate: float = 2e-5, max_length: int = 256):
         start_time = time.time()
+        print(f"Using {len(preprocessed_texts)} preprocessed texts for LLM training")
         
-        # Train model using train_llm function
-        self.model, self.tokenizer, test_results = train_llm(
-            data_path=data_path,
+        # Train model using custom train_llm_with_preprocessed function
+        self.model, self.tokenizer, test_results = train_llm_with_preprocessed(
+            data=data,
+            preprocessed_texts=preprocessed_texts,
             model_name=self.model_name,
             epochs=epochs,
             batch_size=batch_size,
@@ -343,10 +269,6 @@ class LLMSentimentClassifier:
         return results
     
     def predict(self, texts):
-        """Make predictions on new texts"""
-        if not self.is_fitted:
-            raise ValueError("Model must be trained first")
-        
         # Preprocess texts
         if isinstance(texts, str):
             texts = [texts]
