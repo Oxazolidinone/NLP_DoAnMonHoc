@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.naive_bayes import MultinomialNB
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support, classification_report
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from sklearn.preprocessing import LabelEncoder
 import joblib
 import time
@@ -27,23 +27,34 @@ class MultinomialNBModel:
         self.model = None 
         self.is_fitted = False
 
-    def train_model(self, data_path, test_size=0.2, random_state=42):
-        df = pd.read_csv(data_path)
-        df.dropna(subset=['content', 'label'], inplace=True)
-        with tqdm(desc="Preprocessing") as pbar:
-            processed_texts = preprocess_text(df['content'].tolist(), use_parallel=self.use_parallel, n_workers=self.n_workers)
-            pbar.update(1)
+    def train_model_with_preprocessed(self, df, preprocessed_texts, test_size=0.2, random_state=42, use_tfidf=True, use_count=True, use_feature_selection=True, use_svd=True):
+        print(f"Using {len(preprocessed_texts)} preprocessed samples")
+        
+        # Encode labels
         labels = self.label_encoder.fit_transform(df['label'])
+        
+        # Extract features with custom settings
         with tqdm(desc="Feature extraction") as pbar:
             if self.use_parallel and isinstance(self.feature_extractor, ParallelVietnameseSentimentFeatureExtractor):
-                features = self.feature_extractor.extract_batch_features_parallel(processed_texts, y=labels, use_parallel=True)
+                features = self.feature_extractor.main_extractor.extract_batch_features(
+                    preprocessed_texts, y=labels, 
+                    use_tfidf=use_tfidf, use_count=use_count, 
+                    use_feature_selection=use_feature_selection, use_svd=use_svd
+                )
             else:
-                features = self.feature_extractor.extract_batch_features(processed_texts, y=labels)
+                features = self.feature_extractor.extract_batch_features(
+                    preprocessed_texts, y=labels,
+                    use_tfidf=use_tfidf, use_count=use_count, 
+                    use_feature_selection=use_feature_selection, use_svd=use_svd
+                )
             pbar.update(1)
         
         X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=test_size, random_state=random_state, stratify=labels)
+        \
         with tqdm(desc="Training MultinomialNB") as pbar:
             start_time = time.time()
+            
+            # For MultinomialNB, ensure non-negative features
             X_train_processed = np.maximum(X_train, 0)
             X_test_processed = np.maximum(X_test, 0)
             
@@ -53,6 +64,7 @@ class MultinomialNBModel:
             
             training_time = time.time() - start_time
             pbar.update(1)
+        
         accuracy = accuracy_score(y_test, y_pred)
         precision, recall, f1, _ = precision_recall_fscore_support(y_test, y_pred, average='weighted')
         
@@ -68,17 +80,11 @@ class MultinomialNBModel:
         return results, X_test, y_test, y_pred
     
     def predict(self, text):
-        if not self.is_fitted:
-            raise ValueError("Model is not fitted yet")
-        
         processed_text = preprocess_text([text], use_parallel=False)
-        
         if isinstance(self.feature_extractor, ParallelVietnameseSentimentFeatureExtractor):
             features = self.feature_extractor.extract_batch_features_parallel(processed_text, use_parallel=False, use_feature_selection=False)
         else:
             features = self.feature_extractor.extract_batch_features(processed_text, use_feature_selection=False)
-        
-        # For MultinomialNB, ensure non-negative features
         features = np.maximum(features, 0)
         
         prediction = self.model.predict(features)[0]
@@ -108,15 +114,3 @@ class MultinomialNBModel:
     
     def close(self):
         self.feature_extractor.close()
-
-def train_multinb_model(data_path, use_parallel: bool = True, n_workers: int = None):
-    trainer = MultinomialNBModel(use_parallel=use_parallel, n_workers=n_workers)
-    results, X_test, y_test, y_pred = trainer.train_model(data_path)
-    return trainer, results
-
-def predict_text(text, model_path="./models", use_parallel: bool = False):
-    trainer = MultinomialNBModel(use_parallel=use_parallel)
-    trainer.load_model(model_path)
-    prediction, confidence = trainer.predict(text)
-    trainer.close()
-    return prediction, confidence
